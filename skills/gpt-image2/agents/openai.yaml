@@ -1,4 +1,4 @@
 interface:
   display_name: "GPT Image 2"
-  short_description: "通过 Dreamfield gpt-image-2 生成和编辑图片 / Generate and edit images"
-  default_prompt: "使用 $gpt-image2 根据以下描述生成或编辑图片，并返回保存后的结果。 / Use $gpt-image2 to generate or edit an image from this description and return the saved result."
+  short_description: "通过 Dreamfield gpt-image-2 生成和编辑图片"
+  default_prompt: "使用 $gpt-image2 根据以下描述生成或编辑图片，并返回保存后的结果。如需英文输出，请在描述中说明。"
