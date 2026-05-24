@@ -19,7 +19,7 @@ Recommended environment:
 - API key env var: `NEW_image2_API_KEY`
 - Author usage note: this skill has been tested with Dreamfield for personal use. It supports 4K output. For details, check Dreamfield for current pricing and model limits.
 
-Use `scripts/generate_image2.py` for actual calls. It handles JSON generation requests, multipart image edit requests, input validation, conservative retry, JSON response saving, `b64_json` decoding, optional URL download, multi-image output, and optional strict wallpaper resizing.
+Use `scripts/generate_image2.py` for actual calls. It handles JSON generation requests, multipart image edit requests, input validation, mask normalization/generation, conservative retry, JSON response saving, `b64_json` decoding, optional URL download, multi-image output, and optional strict wallpaper resizing.
 
 ## Workflow
 
@@ -39,13 +39,40 @@ Use `scripts/generate_image2.py` for actual calls. It handles JSON generation re
 
 ## Image-to-Image
 
-Use `--image PATH` for reference-image generation or whole-image edits. Repeat `--image` to provide multiple references. Use `--clipboard-image` when the user has copied an image or image file to the OS clipboard. Use `--mask PATH` only when the user asks for a localized edit/inpainting; the mask applies to the first input image.
+Use `--image PATH` for reference-image generation or whole-image edits. Repeat `--image` to provide multiple references. Use `--clipboard-image` when the user has copied an image or image file to the OS clipboard. Use masks only when the user asks for localized editing/inpainting; masks apply to the first input image.
 
 The script validates local input paths before upload:
 
 - `--image`, `--mask`, and `--prompt-file` support `~` expansion.
 - Missing files, empty files, and obvious non-image input files fail before the API request.
 - Error messages print normalized absolute paths so the failed input is easy to find.
+
+## Mask Editing
+
+Masks follow the OpenAI-compatible edits convention: transparent pixels are edited; opaque pixels are preserved. The script always uploads a normalized PNG alpha mask saved under `OUTPUT_DIR/generated-masks/`.
+
+User-provided masks:
+
+- Pass `--mask PATH` with `--image`.
+- Alpha PNG masks preserve their alpha semantics.
+- Non-alpha black/white masks are converted with `white/bright = edit` and `black/dark = preserve`.
+- If the mask size differs from the first input image, it is resized automatically.
+
+Generated masks:
+
+- `--mask-auto full`: edit the full image.
+- `--mask-auto center`: edit the center 60% rectangle.
+- `--mask-auto border`: edit the outer 15% border.
+- `--mask-auto rect --mask-rect X,Y,W,H`: edit a rectangle in pixel coordinates.
+- `--mask-auto circle --mask-circle X,Y,R`: edit a circle in pixel coordinates.
+- `--mask-auto alpha`: use transparent pixels from the first input image as edit areas.
+
+Mask modifiers:
+
+- `--mask-invert`: swap edit and preserve areas.
+- `--mask-feather PX`: blur mask edges by `PX` pixels.
+
+`--mask` and `--mask-auto` are mutually exclusive. `--mask-rect` only works with `--mask-auto rect`; `--mask-circle` only works with `--mask-auto circle`.
 
 The script automatically switches to:
 
@@ -132,6 +159,32 @@ python3 "$SKILL_DIR/scripts/generate_image2.py" \
   --image "/absolute/path/to/source.png" \
   --mask "/absolute/path/to/mask.png" \
   --prompt "Replace only the masked background with a softly blurred sunset balcony scene while preserving the person, face, pose, clothing, and lighting continuity. No text, no watermark." \
+  --size 1792x1024 \
+  --output-dir "./gpt-image2-output"
+```
+
+Generated rectangle mask:
+
+```bash
+SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/gpt-image2"
+python3 "$SKILL_DIR/scripts/generate_image2.py" \
+  --image "/absolute/path/to/source.png" \
+  --mask-auto rect \
+  --mask-rect 120,80,640,360 \
+  --prompt "Replace only the masked area with a softly blurred sunset balcony scene while preserving the rest of the image. No text, no watermark." \
+  --size 1792x1024 \
+  --output-dir "./gpt-image2-output"
+```
+
+Generated center mask with soft edges:
+
+```bash
+SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/gpt-image2"
+python3 "$SKILL_DIR/scripts/generate_image2.py" \
+  --image "/absolute/path/to/source.png" \
+  --mask-auto center \
+  --mask-feather 8 \
+  --prompt "Redesign only the masked center region while preserving the border and overall lighting. No text, no watermark." \
   --size 1792x1024 \
   --output-dir "./gpt-image2-output"
 ```

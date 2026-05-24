@@ -40,6 +40,32 @@ def parse_size(value: str) -> tuple[int, int]:
     return width, height
 
 
+def parse_rect(value: str) -> tuple[int, int, int, int]:
+    try:
+        parts = [int(part.strip()) for part in value.split(",")]
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("--mask-rect must look like X,Y,W,H") from exc
+    if len(parts) != 4:
+        raise argparse.ArgumentTypeError("--mask-rect must look like X,Y,W,H")
+    x, y, width, height = parts
+    if x < 0 or y < 0 or width <= 0 or height <= 0:
+        raise argparse.ArgumentTypeError("--mask-rect requires X,Y >= 0 and W,H > 0")
+    return x, y, width, height
+
+
+def parse_circle(value: str) -> tuple[int, int, int]:
+    try:
+        parts = [int(part.strip()) for part in value.split(",")]
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("--mask-circle must look like X,Y,R") from exc
+    if len(parts) != 3:
+        raise argparse.ArgumentTypeError("--mask-circle must look like X,Y,R")
+    x, y, radius = parts
+    if x < 0 or y < 0 or radius <= 0:
+        raise argparse.ArgumentTypeError("--mask-circle requires X,Y >= 0 and R > 0")
+    return x, y, radius
+
+
 def request_json(url: str, api_key: str, payload: dict, timeout: int) -> tuple[int, dict]:
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
@@ -295,6 +321,168 @@ def planned_output_paths(output_dir: Path, stem: str, count: int, target: tuple[
     return paths
 
 
+def require_pillow():
+    try:
+        from PIL import Image, ImageDraw, ImageFilter
+    except ImportError as exc:
+        raise RuntimeError("Pillow is required for mask normalization and generation.") from exc
+    return Image, ImageDraw, ImageFilter
+
+
+def first_image_size(path: Path) -> tuple[int, int]:
+    Image, _, _ = require_pillow()
+    with Image.open(path) as image:
+        return image.size
+
+
+def has_alpha_channel(image) -> bool:
+    return "A" in image.getbands() or "transparency" in image.info
+
+
+def validate_rect_bounds(rect: tuple[int, int, int, int], size: tuple[int, int]) -> None:
+    x, y, width, height = rect
+    image_width, image_height = size
+    if x + width > image_width or y + height > image_height:
+        raise ValueError(
+            f"--mask-rect {x},{y},{width},{height} exceeds first input image size "
+            f"{image_width}x{image_height}"
+        )
+
+
+def validate_circle_bounds(circle: tuple[int, int, int], size: tuple[int, int]) -> None:
+    x, y, radius = circle
+    image_width, image_height = size
+    if x - radius < 0 or y - radius < 0 or x + radius > image_width or y + radius > image_height:
+        raise ValueError(
+            f"--mask-circle {x},{y},{radius} exceeds first input image size "
+            f"{image_width}x{image_height}"
+        )
+
+
+def make_alpha_mask_from_file(mask_path: Path, target_size: tuple[int, int]):
+    Image, _, _ = require_pillow()
+    with Image.open(mask_path) as image:
+        if has_alpha_channel(image):
+            alpha = image.convert("RGBA").getchannel("A")
+        else:
+            grayscale = image.convert("L")
+            # API edits transparent pixels, so white user masks become transparent edit areas.
+            alpha = Image.eval(grayscale, lambda pixel: 255 - pixel)
+        if alpha.size != target_size:
+            alpha = alpha.resize(target_size, Image.Resampling.LANCZOS)
+        return alpha
+
+
+def make_auto_alpha_mask(
+    mode: str,
+    target_size: tuple[int, int],
+    source_image_path: Path,
+    rect: tuple[int, int, int, int] | None,
+    circle: tuple[int, int, int] | None,
+):
+    Image, ImageDraw, _ = require_pillow()
+    width, height = target_size
+
+    if mode == "full":
+        return Image.new("L", target_size, 0)
+
+    if mode == "center":
+        alpha = Image.new("L", target_size, 255)
+        edit_width = round(width * 0.6)
+        edit_height = round(height * 0.6)
+        left = (width - edit_width) // 2
+        top = (height - edit_height) // 2
+        ImageDraw.Draw(alpha).rectangle([left, top, left + edit_width - 1, top + edit_height - 1], fill=0)
+        return alpha
+
+    if mode == "border":
+        alpha = Image.new("L", target_size, 0)
+        inset_x = round(width * 0.15)
+        inset_y = round(height * 0.15)
+        ImageDraw.Draw(alpha).rectangle([inset_x, inset_y, width - inset_x - 1, height - inset_y - 1], fill=255)
+        return alpha
+
+    if mode == "rect":
+        if rect is None:
+            raise ValueError("--mask-auto rect requires --mask-rect X,Y,W,H")
+        validate_rect_bounds(rect, target_size)
+        x, y, rect_width, rect_height = rect
+        alpha = Image.new("L", target_size, 255)
+        ImageDraw.Draw(alpha).rectangle([x, y, x + rect_width - 1, y + rect_height - 1], fill=0)
+        return alpha
+
+    if mode == "circle":
+        if circle is None:
+            raise ValueError("--mask-auto circle requires --mask-circle X,Y,R")
+        validate_circle_bounds(circle, target_size)
+        x, y, radius = circle
+        alpha = Image.new("L", target_size, 255)
+        ImageDraw.Draw(alpha).ellipse([x - radius, y - radius, x + radius, y + radius], fill=0)
+        return alpha
+
+    if mode == "alpha":
+        with Image.open(source_image_path) as image:
+            if not has_alpha_channel(image):
+                raise ValueError("--mask-auto alpha requires the first input image to have transparency.")
+            alpha = image.convert("RGBA").getchannel("A")
+            if alpha.size != target_size:
+                alpha = alpha.resize(target_size, Image.Resampling.LANCZOS)
+            return alpha
+
+    raise ValueError(f"Unsupported --mask-auto mode: {mode}")
+
+
+def save_alpha_mask(alpha, output_path: Path, invert: bool, feather: float) -> Path:
+    Image, _, ImageFilter = require_pillow()
+    if invert:
+        alpha = Image.eval(alpha, lambda pixel: 255 - pixel)
+    if feather > 0:
+        alpha = alpha.filter(ImageFilter.GaussianBlur(radius=feather))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    mask_image = Image.new("RGBA", alpha.size, (255, 255, 255, 255))
+    mask_image.putalpha(alpha)
+    mask_image.save(output_path, format="PNG")
+    return output_path
+
+
+def prepare_mask(args, stem: str) -> tuple[Path | None, dict | None]:
+    if not args.mask and not args.mask_auto:
+        return None, None
+    if not args.image:
+        raise ValueError("--mask or --mask-auto requires at least one --image.")
+    if args.mask and args.mask_auto:
+        raise ValueError("--mask and --mask-auto are mutually exclusive.")
+    if args.mask_feather < 0:
+        raise ValueError("--mask-feather must be >= 0.")
+
+    target_size = first_image_size(args.image[0])
+    generated_dir = args.output_dir / "generated-masks"
+    output_path = generated_dir / f"{stem}_mask.png"
+
+    if args.mask:
+        alpha = make_alpha_mask_from_file(args.mask, target_size)
+        source = str(args.mask)
+        mode = "file"
+    else:
+        alpha = make_auto_alpha_mask(args.mask_auto, target_size, args.image[0], args.mask_rect, args.mask_circle)
+        source = None
+        mode = args.mask_auto
+
+    normalized_path = save_alpha_mask(alpha, output_path, args.mask_invert, args.mask_feather)
+    metadata = {
+        "source": source,
+        "mode": mode,
+        "path": str(normalized_path),
+        "input_size": f"{target_size[0]}x{target_size[1]}",
+        "invert": args.mask_invert,
+        "feather": args.mask_feather,
+        "rect": args.mask_rect,
+        "circle": args.mask_circle,
+        "semantics": "transparent pixels are edited; white non-alpha masks become edit areas",
+    }
+    return normalized_path, metadata
+
+
 def crop_resize(src: Path, dst: Path, target: tuple[int, int]) -> tuple[int, int] | None:
     try:
         from PIL import Image
@@ -523,7 +711,16 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Directory for clipboard image snapshots. Defaults to OUTPUT_DIR/clipboard-inputs.",
     )
-    parser.add_argument("--mask", type=Path, help="Optional alpha mask for editing the first input image.")
+    parser.add_argument("--mask", type=Path, help="Optional mask image for editing the first input image.")
+    parser.add_argument(
+        "--mask-auto",
+        choices=["full", "center", "border", "rect", "circle", "alpha"],
+        help="Generate a mask for the first input image instead of providing --mask.",
+    )
+    parser.add_argument("--mask-rect", type=parse_rect, help="Rectangle mask for --mask-auto rect, formatted X,Y,W,H.")
+    parser.add_argument("--mask-circle", type=parse_circle, help="Circle mask for --mask-auto circle, formatted X,Y,R.")
+    parser.add_argument("--mask-invert", action="store_true", help="Invert edit and preserve areas in the final mask.")
+    parser.add_argument("--mask-feather", type=float, default=0.0, help="Feather final mask edges by this many pixels.")
     parser.add_argument("--size", default="1792x1024", help="Requested image size, e.g. 1024x1024 or 1792x1024.")
     parser.add_argument("--target-size", type=parse_size, help="Crop and resize final image to exact WIDTHxHEIGHT.")
     parser.add_argument("--n", type=int, default=1)
@@ -574,8 +771,17 @@ def main() -> int:
         args.image.append(clipboard_path)
         print(f"Clipboard image saved to: {clipboard_path}")
 
-    if args.mask and not args.image:
-        print("--mask requires at least one --image.", file=sys.stderr)
+    if (args.mask or args.mask_auto) and not args.image:
+        print("--mask or --mask-auto requires at least one --image.", file=sys.stderr)
+        return 1
+    if args.mask and args.mask_auto:
+        print("--mask and --mask-auto are mutually exclusive.", file=sys.stderr)
+        return 1
+    if args.mask_rect and args.mask_auto != "rect":
+        print("--mask-rect can only be used with --mask-auto rect.", file=sys.stderr)
+        return 1
+    if args.mask_circle and args.mask_auto != "circle":
+        print("--mask-circle can only be used with --mask-auto circle.", file=sys.stderr)
         return 1
     try:
         args.image = [validate_image_file(image_path, "Input image") for image_path in args.image]
@@ -588,6 +794,13 @@ def main() -> int:
     json_path = args.output_dir / f"{stem}.response.json"
     endpoint = EDITS_ENDPOINT if args.image else GENERATIONS_ENDPOINT
     mode = "edit" if args.image else "generation"
+    try:
+        mask_path, mask_metadata = prepare_mask(args, stem)
+    except (RuntimeError, ValueError) as exc:
+        print(f"Mask error: {exc}", file=sys.stderr)
+        return 1
+    if mask_path:
+        args.mask = mask_path
 
     payload = {
         "model": args.model,
@@ -609,6 +822,7 @@ def main() -> int:
                     **payload,
                     "image": [str(path) for path in args.image],
                     "mask": str(args.mask) if args.mask else None,
+                    "mask_details": mask_metadata,
                     "planned_output": planned_output_paths(args.output_dir, stem, args.n, args.target_size),
                 },
                 ensure_ascii=False,
@@ -627,6 +841,8 @@ def main() -> int:
         return 1
 
     print(f"Calling Dreamfield image {mode} API...")
+    if mask_metadata:
+        print(f"Mask saved to: {mask_metadata['path']}")
     if args.image:
         def request_fn() -> tuple[int, dict]:
             fields = [(key, str(value)) for key, value in payload.items()]
