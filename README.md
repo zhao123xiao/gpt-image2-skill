@@ -14,6 +14,14 @@ After installation, restart Codex.
 
 ## Environment
 
+Recommended provider and model:
+
+- Provider: [Dreamfield](https://www.dreamfield.top/)
+- Model: `gpt-image-2`
+- API key environment variable: `NEW_image2_API_KEY`
+
+Author note: this skill is tested with Dreamfield for personal use. At the time of writing, the author's usage is about `0.1` per image generation and supports 4K output; check Dreamfield for current pricing and model limits.
+
 Set the API key before using the skill:
 
 ```bash
