@@ -1,28 +1,40 @@
 # GPT Image 2 Skill
 
-Codex skill for generating and editing images through Dreamfield's OpenAI-compatible `gpt-image-2` image API.
+通过 Dreamfield 的 OpenAI 兼容 `gpt-image-2` 图像 API，为 Codex 提供文生图、图生图和局部编辑能力的 skill。
 
-## Install
+English: A Codex skill for generating and editing images through Dreamfield's OpenAI-compatible `gpt-image-2` image API.
 
-Install this skill from the repository path:
+## 安装 / Install
+
+从 GitHub 仓库路径安装该 skill：
+
+English: Install this skill from the repository path:
 
 ```bash
 python3 install-skill-from-github.py --repo OWNER/REPO --path skills/gpt-image2
 ```
 
-After installation, restart Codex.
+安装完成后，重启 Codex。
 
-## Environment
+English: After installation, restart Codex.
 
-Recommended provider and model:
+## 环境 / Environment
 
-- Provider: [Dreamfield](https://www.dreamfield.top/)
-- Model: `gpt-image-2`
-- API key environment variable: `NEW_image2_API_KEY`
+推荐服务和模型：
 
-Author note: this skill has been tested with Dreamfield for personal use. It supports 4K output. For details, check Dreamfield for current pricing and model limits.
+English: Recommended provider and model:
 
-Set the API key before using the skill:
+- 服务商 / Provider: [Dreamfield](https://www.dreamfield.top/)
+- 模型 / Model: `gpt-image-2`
+- API key 环境变量 / API key environment variable: `NEW_image2_API_KEY`
+
+作者备注：该 skill 已在 Dreamfield 中测试，供个人使用。支持 4K 输出。至于细节，可以查看 Dreamfield 的最新价格和模型限制。
+
+English: This skill has been tested with Dreamfield for personal use. It supports 4K output. For details, check Dreamfield for current pricing and model limits.
+
+使用前设置 API key：
+
+English: Set the API key before using the skill:
 
 ```bash
 export NEW_image2_API_KEY='your_api_key'
