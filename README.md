@@ -20,7 +20,7 @@ Recommended provider and model:
 - Model: `gpt-image-2`
 - API key environment variable: `NEW_image2_API_KEY`
 
-Author note: this skill is tested with Dreamfield for personal use. At the time of writing, the author's usage is about `0.1` per image generation and supports 4K output; check Dreamfield for current pricing and model limits.
+Author note: this skill has been tested with Dreamfield for personal use. It supports 4K output. For details, check Dreamfield for current pricing and model limits.
 
 Set the API key before using the skill:
 

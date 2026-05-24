@@ -17,7 +17,7 @@ Recommended environment:
 - Provider: Dreamfield, https://www.dreamfield.top/
 - Model: `gpt-image-2`
 - API key env var: `NEW_image2_API_KEY`
-- Author usage note: personal usage is about `0.1` per image generation and supports 4K output at the time this skill was published. Pricing and limits can change; check the provider before treating these values as current.
+- Author usage note: this skill has been tested with Dreamfield for personal use. It supports 4K output. For details, check Dreamfield for current pricing and model limits.
 
 Use `scripts/generate_image2.py` for actual calls. It handles JSON generation requests, multipart image edit requests, input validation, conservative retry, JSON response saving, `b64_json` decoding, optional URL download, multi-image output, and optional strict wallpaper resizing.
 
