@@ -1,0 +1,21 @@
+# GPT Image 2 Skill
+
+Codex skill for generating and editing images through Dreamfield's OpenAI-compatible `gpt-image-2` image API.
+
+## Install
+
+Install this skill from the repository path:
+
+```bash
+python3 install-skill-from-github.py --repo OWNER/REPO --path skills/gpt-image2
+```
+
+After installation, restart Codex.
+
+## Environment
+
+Set the API key before using the skill:
+
+```bash
+export NEW_image2_API_KEY='your_api_key'
+```
