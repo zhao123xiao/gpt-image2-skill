@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import mimetypes
 import os
@@ -321,16 +322,283 @@ def planned_output_paths(output_dir: Path, stem: str, count: int, target: tuple[
     return paths
 
 
+def planned_summary_path(output_dir: Path, stem: str) -> Path:
+    return output_dir / f"{stem}.summary.json"
+
+
+def write_json(path: Path, payload: dict) -> None:
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def image_has_alpha(image) -> bool:
+    return "A" in image.getbands() or "transparency" in image.info
+
+
+def scaled_size(size: tuple[int, int], max_side: int, max_megapixels: float) -> tuple[int, int]:
+    width, height = size
+    max_pixels = max_megapixels * 1_000_000
+    scale = min(1.0, max_side / max(width, height), (max_pixels / (width * height)) ** 0.5)
+    if scale >= 1:
+        return size
+    return max(1, round(width * scale)), max(1, round(height * scale))
+
+
+def preprocess_image_file(
+    source_path: Path,
+    output_dir: Path,
+    stem: str,
+    label: str,
+    index: int,
+    max_side: int,
+    max_megapixels: float,
+    jpeg_quality: int,
+) -> tuple[Path, dict]:
+    Image, _, _, ImageOps = require_pillow()
+    processed_dir = output_dir / "processed-inputs"
+    processed_dir.mkdir(parents=True, exist_ok=True)
+
+    with Image.open(source_path) as image:
+        image = ImageOps.exif_transpose(image)
+        original_size = image.size
+        target_size = scaled_size(original_size, max_side, max_megapixels)
+        resized = target_size != original_size
+        if resized:
+            image = image.resize(target_size, Image.Resampling.LANCZOS)
+
+        has_alpha = image_has_alpha(image)
+        suffix = ".png" if has_alpha else ".jpg"
+        processed_path = processed_dir / f"{stem}_{label}_{index}{suffix}"
+        if has_alpha:
+            image.convert("RGBA").save(processed_path, format="PNG")
+            output_format = "PNG"
+        else:
+            image.convert("RGB").save(processed_path, format="JPEG", quality=jpeg_quality, optimize=True)
+            output_format = "JPEG"
+
+    metadata = {
+        "source": str(source_path),
+        "path": str(processed_path),
+        "original_size": f"{original_size[0]}x{original_size[1]}",
+        "processed_size": f"{target_size[0]}x{target_size[1]}",
+        "format": output_format,
+        "resized": resized,
+        "max_input_side": max_side,
+        "max_input_megapixels": max_megapixels,
+    }
+    return processed_path, metadata
+
+
+def preprocess_inputs(args, stem: str) -> tuple[list[Path], list[dict]]:
+    if args.no_preprocess:
+        return args.image, [
+            {
+                "source": str(path),
+                "path": str(path),
+                "preprocessed": False,
+            }
+            for path in args.image
+        ]
+
+    processed_paths: list[Path] = []
+    metadata: list[dict] = []
+    for index, image_path in enumerate(args.image, start=1):
+        processed_path, item = preprocess_image_file(
+            image_path,
+            args.output_dir,
+            stem,
+            "image",
+            index,
+            args.max_input_side,
+            args.max_input_megapixels,
+            args.jpeg_quality,
+        )
+        item["preprocessed"] = True
+        processed_paths.append(processed_path)
+        metadata.append(item)
+    return processed_paths, metadata
+
+
+def create_mask_overlay(image_path: Path, mask_path: Path, output_path: Path) -> Path:
+    Image, _, _, _ = require_pillow()
+    with Image.open(image_path) as source:
+        base = source.convert("RGBA")
+    with Image.open(mask_path) as mask_image:
+        alpha = mask_image.convert("RGBA").getchannel("A")
+    edit_strength = Image.eval(alpha, lambda pixel: 255 - pixel)
+    overlay_alpha = Image.eval(edit_strength, lambda pixel: round(pixel * 0.45))
+    overlay = Image.new("RGBA", base.size, (255, 0, 0, 0))
+    overlay.putalpha(overlay_alpha)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    Image.alpha_composite(base, overlay).save(output_path, format="PNG")
+    return output_path
+
+
+def manual_mask_source_path(output_dir: Path, stem: str) -> Path:
+    return output_dir / "drawn-masks" / f"{stem}_drawn_mask.png"
+
+
+def run_manual_mask_editor(image_path: Path, output_path: Path) -> Path:
+    painter_script = Path(__file__).resolve().with_name("mask_painter.py")
+    if not painter_script.is_file():
+        raise RuntimeError(f"Manual mask painter script is missing: {painter_script}")
+    command = [
+        sys.executable,
+        str(painter_script),
+        "--image",
+        str(image_path),
+        "--output",
+        str(output_path),
+    ]
+    completed = subprocess.run(command)
+    if completed.returncode == 2:
+        raise RuntimeError("Manual mask drawing was cancelled.")
+    if completed.returncode != 0:
+        raise RuntimeError(f"Manual mask painter failed with exit code {completed.returncode}.")
+    if not output_path.is_file() or output_path.stat().st_size <= 0:
+        raise RuntimeError(f"Manual mask painter did not create a valid mask: {output_path}")
+    return output_path
+
+
+def planned_draw_mask_metadata(args, stem: str) -> tuple[Path, dict, Path | None]:
+    target_size = first_image_size(args.image[0])
+    normalized_path = args.output_dir / "generated-masks" / f"{stem}_mask.png"
+    overlay_path = None if args.no_mask_overlay else args.output_dir / "mask-overlays" / f"{stem}_mask_overlay.png"
+    metadata = {
+        "source": None,
+        "mode": "draw",
+        "path": str(normalized_path),
+        "drawn_source": str(manual_mask_source_path(args.output_dir, stem)),
+        "input_size": f"{target_size[0]}x{target_size[1]}",
+        "invert": args.mask_invert,
+        "feather": args.mask_feather,
+        "rect": None,
+        "circle": None,
+        "semantics": "transparent pixels are edited; red drawn areas become edit areas",
+    }
+    if overlay_path:
+        metadata["overlay"] = str(overlay_path)
+    return normalized_path, metadata, overlay_path
+
+
+def build_summary(
+    *,
+    mode: str,
+    endpoint: str,
+    payload: dict,
+    prompt: str,
+    original_images: list[Path],
+    processed_inputs: list[dict],
+    mask_metadata: dict | None,
+    mask_overlay_path: Path | None,
+    response_path: Path,
+    output_paths: list[Path],
+    target_paths: list[Path],
+    response_payload: dict | None,
+    status: int | None,
+    error: str | None,
+) -> dict:
+    revised_prompts = []
+    if response_payload:
+        for item in response_payload.get("data") or []:
+            if item.get("revised_prompt"):
+                revised_prompts.append(item["revised_prompt"])
+    return {
+        "mode": mode,
+        "endpoint": endpoint,
+        "model": payload.get("model"),
+        "prompt": prompt,
+        "size": payload.get("size"),
+        "n": payload.get("n"),
+        "response_format": payload.get("response_format"),
+        "status": status,
+        "input_images": [str(path) for path in original_images],
+        "processed_inputs": processed_inputs,
+        "mask": mask_metadata,
+        "mask_overlay": str(mask_overlay_path) if mask_overlay_path else None,
+        "response_json": str(response_path),
+        "output_images": [str(path) for path in output_paths],
+        "target_images": [str(path) for path in target_paths],
+        "revised_prompts": revised_prompts,
+        "error": error,
+    }
+
+
+def self_test_report(args) -> tuple[dict, bool]:
+    checks = []
+
+    def add_check(name: str, ok: bool, detail: str, blocking: bool = True) -> None:
+        checks.append({"name": name, "ok": ok, "blocking": blocking, "detail": detail})
+
+    add_check("python", sys.version_info >= (3, 10), sys.version.split()[0])
+    try:
+        import PIL
+
+        add_check("pillow", True, getattr(PIL, "__version__", "available"))
+    except ImportError:
+        add_check("pillow", False, "Pillow is required for preprocessing, mask handling, and target resizing.")
+
+    try:
+        import tkinter  # noqa: F401
+
+        add_check("tkinter", True, "available for --mask-draw", blocking=False)
+    except ImportError:
+        add_check("tkinter", False, "not available; --mask-draw will not work", blocking=False)
+
+    api_key_name = args.api_key_env
+    add_check(
+        "api_key_env",
+        bool(os.environ.get(api_key_name)),
+        f"{api_key_name} is {'set' if os.environ.get(api_key_name) else 'not set'}",
+    )
+
+    add_check("generations_endpoint", GENERATIONS_ENDPOINT.startswith("https://"), GENERATIONS_ENDPOINT)
+    add_check("edits_endpoint", EDITS_ENDPOINT.startswith("https://"), EDITS_ENDPOINT)
+
+    clipboard_backends = {
+        "powershell.exe": bool(shutil.which("powershell.exe")),
+        "wl-paste": bool(shutil.which("wl-paste")),
+        "xclip": bool(shutil.which("xclip")),
+    }
+    add_check(
+        "clipboard_backend",
+        any(clipboard_backends.values()),
+        json.dumps(clipboard_backends, ensure_ascii=False),
+        blocking=False,
+    )
+
+    try:
+        args.output_dir.mkdir(parents=True, exist_ok=True)
+        test_path = args.output_dir / ".gpt-image2-self-test"
+        test_path.write_text("ok", encoding="utf-8")
+        test_path.unlink(missing_ok=True)
+        add_check("output_dir_writable", True, str(args.output_dir))
+    except OSError as exc:
+        add_check("output_dir_writable", False, f"{args.output_dir}: {exc}")
+
+    script_path = Path(__file__).resolve()
+    add_check("script_path", script_path.is_file(), str(script_path))
+    painter_path = script_path.with_name("mask_painter.py")
+    add_check("mask_painter_script", painter_path.is_file(), str(painter_path))
+
+    blocking_ok = all(check["ok"] for check in checks if check["blocking"])
+    report = {
+        "ok": blocking_ok,
+        "offline": True,
+        "checks": checks,
+    }
+    return report, blocking_ok
+
+
 def require_pillow():
     try:
-        from PIL import Image, ImageDraw, ImageFilter
+        from PIL import Image, ImageDraw, ImageFilter, ImageOps
     except ImportError as exc:
-        raise RuntimeError("Pillow is required for mask normalization and generation.") from exc
-    return Image, ImageDraw, ImageFilter
+        raise RuntimeError("Pillow is required for image preprocessing and mask handling.") from exc
+    return Image, ImageDraw, ImageFilter, ImageOps
 
 
 def first_image_size(path: Path) -> tuple[int, int]:
-    Image, _, _ = require_pillow()
+    Image, _, _, _ = require_pillow()
     with Image.open(path) as image:
         return image.size
 
@@ -360,8 +628,9 @@ def validate_circle_bounds(circle: tuple[int, int, int], size: tuple[int, int]) 
 
 
 def make_alpha_mask_from_file(mask_path: Path, target_size: tuple[int, int]):
-    Image, _, _ = require_pillow()
+    Image, _, _, ImageOps = require_pillow()
     with Image.open(mask_path) as image:
+        image = ImageOps.exif_transpose(image)
         if has_alpha_channel(image):
             alpha = image.convert("RGBA").getchannel("A")
         else:
@@ -380,7 +649,7 @@ def make_auto_alpha_mask(
     rect: tuple[int, int, int, int] | None,
     circle: tuple[int, int, int] | None,
 ):
-    Image, ImageDraw, _ = require_pillow()
+    Image, ImageDraw, _, _ = require_pillow()
     width, height = target_size
 
     if mode == "full":
@@ -433,7 +702,7 @@ def make_auto_alpha_mask(
 
 
 def save_alpha_mask(alpha, output_path: Path, invert: bool, feather: float) -> Path:
-    Image, _, ImageFilter = require_pillow()
+    Image, _, ImageFilter, _ = require_pillow()
     if invert:
         alpha = Image.eval(alpha, lambda pixel: 255 - pixel)
     if feather > 0:
@@ -690,7 +959,7 @@ def save_clipboard_image(path: Path) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate or edit an image with Dreamfield gpt-image-2.")
-    prompt_group = parser.add_mutually_exclusive_group(required=True)
+    prompt_group = parser.add_mutually_exclusive_group()
     prompt_group.add_argument("--prompt", help="English image prompt to send to the model.")
     prompt_group.add_argument("--prompt-file", type=Path, help="UTF-8 text file containing the prompt.")
     parser.add_argument("--model", default="gpt-image-2")
@@ -713,6 +982,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--mask", type=Path, help="Optional mask image for editing the first input image.")
     parser.add_argument(
+        "--mask-draw",
+        action="store_true",
+        help="Open a manual painter to brush, rectangle, or circle the edit area before calling the edits API.",
+    )
+    parser.add_argument(
         "--mask-auto",
         choices=["full", "center", "border", "rect", "circle", "alpha"],
         help="Generate a mask for the first input image instead of providing --mask.",
@@ -721,6 +995,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mask-circle", type=parse_circle, help="Circle mask for --mask-auto circle, formatted X,Y,R.")
     parser.add_argument("--mask-invert", action="store_true", help="Invert edit and preserve areas in the final mask.")
     parser.add_argument("--mask-feather", type=float, default=0.0, help="Feather final mask edges by this many pixels.")
+    parser.add_argument("--no-preprocess", action="store_true", help="Upload original input images instead of processed copies.")
+    parser.add_argument("--max-input-side", type=int, default=2048, help="Maximum side length for processed input images.")
+    parser.add_argument("--max-input-megapixels", type=float, default=8.0, help="Maximum megapixels for processed input images.")
+    parser.add_argument("--jpeg-quality", type=int, default=92, help="JPEG quality for processed non-alpha input images.")
+    parser.add_argument("--no-mask-overlay", action="store_true", help="Do not create mask overlay preview images.")
     parser.add_argument("--size", default="1792x1024", help="Requested image size, e.g. 1024x1024 or 1792x1024.")
     parser.add_argument("--target-size", type=parse_size, help="Crop and resize final image to exact WIDTHxHEIGHT.")
     parser.add_argument("--n", type=int, default=1)
@@ -730,11 +1009,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--api-key-env", default="NEW_image2_API_KEY")
     parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument("--dry-run", action="store_true", help="Print request metadata without calling the API.")
+    parser.add_argument("--self-test", action="store_true", help="Run offline environment checks and exit.")
     return parser
 
 
 def main() -> int:
     args = build_parser().parse_args()
+    args.output_dir = normalize_path(args.output_dir)
+    if args.self_test:
+        report, ok = self_test_report(args)
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if ok else 1
+
     if args.prompt_file is not None:
         try:
             args.prompt_file = validate_existing_file(args.prompt_file, "Prompt file")
@@ -745,7 +1031,7 @@ def main() -> int:
     else:
         prompt = args.prompt.strip() if args.prompt is not None else ""
     if not prompt:
-        print("Prompt is empty.", file=sys.stderr)
+        print("Prompt is required unless --self-test is used.", file=sys.stderr)
         return 1
     if args.n <= 0:
         print("--n must be a positive integer.", file=sys.stderr)
@@ -755,8 +1041,16 @@ def main() -> int:
     except argparse.ArgumentTypeError as exc:
         print(f"--size {exc}", file=sys.stderr)
         return 1
+    if args.max_input_side <= 0:
+        print("--max-input-side must be > 0.", file=sys.stderr)
+        return 1
+    if args.max_input_megapixels <= 0:
+        print("--max-input-megapixels must be > 0.", file=sys.stderr)
+        return 1
+    if not 1 <= args.jpeg_quality <= 100:
+        print("--jpeg-quality must be between 1 and 100.", file=sys.stderr)
+        return 1
 
-    args.output_dir = normalize_path(args.output_dir)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     stem = f"{args.basename}_{timestamp}"
@@ -771,11 +1065,12 @@ def main() -> int:
         args.image.append(clipboard_path)
         print(f"Clipboard image saved to: {clipboard_path}")
 
-    if (args.mask or args.mask_auto) and not args.image:
-        print("--mask or --mask-auto requires at least one --image.", file=sys.stderr)
+    if (args.mask or args.mask_auto or args.mask_draw) and not args.image:
+        print("--mask, --mask-auto, or --mask-draw requires at least one --image.", file=sys.stderr)
         return 1
-    if args.mask and args.mask_auto:
-        print("--mask and --mask-auto are mutually exclusive.", file=sys.stderr)
+    mask_mode_count = sum(bool(value) for value in (args.mask, args.mask_auto, args.mask_draw))
+    if mask_mode_count > 1:
+        print("--mask, --mask-auto, and --mask-draw are mutually exclusive.", file=sys.stderr)
         return 1
     if args.mask_rect and args.mask_auto != "rect":
         print("--mask-rect can only be used with --mask-auto rect.", file=sys.stderr)
@@ -790,17 +1085,56 @@ def main() -> int:
     except ValueError as exc:
         print(exc, file=sys.stderr)
         return 1
+    original_images = list(args.image)
+    try:
+        args.image, processed_inputs = preprocess_inputs(args, stem)
+    except RuntimeError as exc:
+        print(f"Preprocess error: {exc}", file=sys.stderr)
+        return 1
 
     json_path = args.output_dir / f"{stem}.response.json"
+    summary_path = planned_summary_path(args.output_dir, stem)
     endpoint = EDITS_ENDPOINT if args.image else GENERATIONS_ENDPOINT
     mode = "edit" if args.image else "generation"
-    try:
-        mask_path, mask_metadata = prepare_mask(args, stem)
-    except (RuntimeError, ValueError) as exc:
-        print(f"Mask error: {exc}", file=sys.stderr)
-        return 1
-    if mask_path:
+    mask_overlay_path = None
+    if args.mask_draw and args.dry_run:
+        try:
+            mask_path, mask_metadata, mask_overlay_path = planned_draw_mask_metadata(args, stem)
+        except RuntimeError as exc:
+            print(f"Mask error: {exc}", file=sys.stderr)
+            return 1
         args.mask = mask_path
+    else:
+        if args.mask_draw:
+            drawn_mask_path = manual_mask_source_path(args.output_dir, stem)
+            try:
+                args.mask = run_manual_mask_editor(args.image[0], drawn_mask_path)
+            except RuntimeError as exc:
+                print(f"Mask draw error: {exc}", file=sys.stderr)
+                return 1
+        try:
+            mask_path, mask_metadata = prepare_mask(args, stem)
+        except (RuntimeError, ValueError) as exc:
+            print(f"Mask error: {exc}", file=sys.stderr)
+            return 1
+        if mask_path:
+            args.mask = mask_path
+        if args.mask_draw and mask_metadata:
+            mask_metadata["mode"] = "draw"
+            mask_metadata["drawn_source"] = str(drawn_mask_path)
+            mask_metadata["semantics"] = "transparent pixels are edited; red drawn areas become edit areas"
+        if mask_path and not args.no_mask_overlay:
+            try:
+                mask_overlay_path = create_mask_overlay(
+                    args.image[0],
+                    mask_path,
+                    args.output_dir / "mask-overlays" / f"{stem}_mask_overlay.png",
+                )
+                if mask_metadata:
+                    mask_metadata["overlay"] = str(mask_overlay_path)
+            except RuntimeError as exc:
+                print(f"Mask overlay error: {exc}", file=sys.stderr)
+                return 1
 
     payload = {
         "model": args.model,
@@ -821,8 +1155,11 @@ def main() -> int:
                 {
                     **payload,
                     "image": [str(path) for path in args.image],
+                    "original_image": [str(path) for path in original_images],
+                    "processed_inputs": processed_inputs,
                     "mask": str(args.mask) if args.mask else None,
                     "mask_details": mask_metadata,
+                    "summary": str(summary_path),
                     "planned_output": planned_output_paths(args.output_dir, stem, args.n, args.target_size),
                 },
                 ensure_ascii=False,
@@ -859,23 +1196,80 @@ def main() -> int:
     print(f"Response saved to: {response_path}")
 
     if has_api_error(status, response_payload):
+        summary = build_summary(
+            mode=mode,
+            endpoint=endpoint,
+            payload=payload,
+            prompt=prompt,
+            original_images=original_images,
+            processed_inputs=processed_inputs,
+            mask_metadata=mask_metadata,
+            mask_overlay_path=mask_overlay_path,
+            response_path=response_path,
+            output_paths=[],
+            target_paths=[],
+            response_payload=response_payload,
+            status=status,
+            error=error_text(response_error(response_payload)),
+        )
+        write_json(summary_path, summary)
+        print(f"Summary saved to: {summary_path}")
         print(f"API error: {error_text(response_error(response_payload))}", file=sys.stderr)
         return 2
 
     data = response_payload.get("data") or []
     print(f"data length: {len(data)}")
     if not data:
+        summary = build_summary(
+            mode=mode,
+            endpoint=endpoint,
+            payload=payload,
+            prompt=prompt,
+            original_images=original_images,
+            processed_inputs=processed_inputs,
+            mask_metadata=mask_metadata,
+            mask_overlay_path=mask_overlay_path,
+            response_path=response_path,
+            output_paths=[],
+            target_paths=[],
+            response_payload=response_payload,
+            status=status,
+            error="No image data returned.",
+        )
+        write_json(summary_path, summary)
+        print(f"Summary saved to: {summary_path}")
         print(f"No image data returned. Inspect the saved response JSON: {response_path}", file=sys.stderr)
         return 3
 
     total = len(data)
+    output_paths: list[Path] = []
+    target_paths: list[Path] = []
     for index, item in enumerate(data, start=1):
         image_path = output_image_path(args.output_dir, stem, index, total)
         if not decode_image(item, image_path, args.timeout):
+            summary = build_summary(
+                mode=mode,
+                endpoint=endpoint,
+                payload=payload,
+                prompt=prompt,
+                original_images=original_images,
+                processed_inputs=processed_inputs,
+                mask_metadata=mask_metadata,
+                mask_overlay_path=mask_overlay_path,
+                response_path=response_path,
+                output_paths=output_paths,
+                target_paths=target_paths,
+                response_payload=response_payload,
+                status=status,
+                error=f"Response item {index} contains neither b64_json nor url.",
+            )
+            write_json(summary_path, summary)
+            print(f"Summary saved to: {summary_path}")
             print(f"Response item {index} contains neither b64_json nor url.", file=sys.stderr)
             print(f"Item keys: {sorted(item.keys())}", file=sys.stderr)
             return 3
 
+        output_paths.append(image_path)
         print(f"Image {index} saved to: {image_path}")
 
         if args.target_size:
@@ -884,6 +1278,7 @@ def main() -> int:
             if resized_size is None:
                 print("Pillow is not installed; skipped exact target-size post-processing.", file=sys.stderr)
             else:
+                target_paths.append(target_path)
                 print(f"Target image {index} saved to: {target_path}")
                 print(f"Target dimensions: {resized_size[0]}x{resized_size[1]}")
 
@@ -891,6 +1286,25 @@ def main() -> int:
             print(f"URL {index}: {item['url']}")
         if item.get("revised_prompt"):
             print(f"Revised prompt {index}: {item['revised_prompt']}")
+
+    summary = build_summary(
+        mode=mode,
+        endpoint=endpoint,
+        payload=payload,
+        prompt=prompt,
+        original_images=original_images,
+        processed_inputs=processed_inputs,
+        mask_metadata=mask_metadata,
+        mask_overlay_path=mask_overlay_path,
+        response_path=response_path,
+        output_paths=output_paths,
+        target_paths=target_paths,
+        response_payload=response_payload,
+        status=status,
+        error=None,
+    )
+    write_json(summary_path, summary)
+    print(f"Summary saved to: {summary_path}")
 
     return 0
 

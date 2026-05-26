@@ -4,6 +4,14 @@
 
 通过 Dreamfield 的 OpenAI 兼容 `gpt-image-2` 图像 API，为 Codex 提供文生图、图生图和局部编辑能力的 skill。
 
+## 功能
+
+- 文生图、图生图和剪贴板图片输入
+- 局部编辑和 inpainting 遮罩
+- 自动遮罩、手绘遮罩和遮罩预览图
+- 输入图片预处理、结果索引和离线自检
+- 内置打包脚本，便于重新生成 skill zip
+
 ## 安装
 
 从 GitHub 仓库路径安装该 skill：

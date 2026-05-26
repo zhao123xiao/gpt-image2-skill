@@ -4,6 +4,14 @@ Language: [简体中文](README.md) | **English**
 
 A Codex skill for generating and editing images through Dreamfield's OpenAI-compatible `gpt-image-2` image API.
 
+## Features
+
+- Text-to-image, image-to-image, and clipboard image input
+- Localized editing and inpainting masks
+- Auto masks, manual mask painting, and mask overlay previews
+- Input image preprocessing, result summaries, and offline self-test
+- Built-in packaging script for regenerating the skill zip
+
 ## Install
 
 Install this skill from the repository path:
