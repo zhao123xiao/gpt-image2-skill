@@ -20,10 +20,6 @@ This skill turns natural-language image requests into a structured generation wo
 - Result summaries for tracking inputs, masks, responses, and outputs.
 - Offline self-test for runtime dependencies, clipboard support, and script availability.
 
-## Dreamfield Environment
-
-This skill is designed for Dreamfield's `gpt-image-2` image model. It has been tested with Dreamfield for personal use and supports 4K output. Current pricing, model limits, and available sizes should be checked on Dreamfield.
-
 ## Documentation
 
 - `skills/gpt-image2/SKILL.md`: core instructions loaded by Codex when using this skill.
