@@ -1,6 +1,6 @@
 ---
 name: gpt-image2
-description: Generate and edit images with Dreamfield's OpenAI-compatible gpt-image-2 image API. Use when the user asks Codex to create, test, or save an image from a text description, make wallpaper or illustration assets, perform image-to-image generation from reference images or clipboard images, use masks/inpainting, verify Dreamfield image generation, package this skill, or troubleshoot image-generation responses such as empty data, b64_json, URL output, quota errors, or content policy errors.
+description: Generate and edit images with Dreamfield's OpenAI-compatible gpt-image-2 image API. Use when the user asks Codex to create, test, or save an image from a text description, make wallpaper or illustration assets, perform image-to-image generation from reference images or clipboard images, use masks/inpainting, verify Dreamfield image generation, or troubleshoot image-generation responses such as empty data, b64_json, URL output, quota errors, or content policy errors.
 ---
 
 # GPT Image 2
@@ -80,13 +80,6 @@ Self-test:
 ```bash
 SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/gpt-image2"
 python3 "$SKILL_DIR/scripts/generate_image2.py" --self-test
-```
-
-Package:
-
-```bash
-SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/gpt-image2"
-python3 "$SKILL_DIR/scripts/package_skill.py"
 ```
 
 ## References

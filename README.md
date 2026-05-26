@@ -26,108 +26,31 @@
 
 语言 / Language: **简体中文** | [English](README.en.md)
 
-这是一个用于 Codex 的 Dreamfield `gpt-image-2` 图像生成与编辑 skill。它通过 Dreamfield 的 OpenAI 兼容图像 API，支持文生图、图生图、剪贴板图片输入、局部编辑、自动遮罩、手绘遮罩和结果索引。
+GPT Image 2 Skill 是一个面向 Codex 的 Dreamfield 图像生成与编辑技能。它基于 Dreamfield 的 OpenAI 兼容 `gpt-image-2` 图像接口，让 Codex 可以根据用户需求完成文生图、图生图、局部编辑和遮罩处理等工作。
 
-## 功能
+## 项目定位
 
-- 文生图：根据文本提示词生成图片。
-- 图生图：使用本地图片或剪贴板图片作为参考图。
-- 局部编辑：通过遮罩进行 inpainting，只修改指定区域。
-- 自动遮罩：支持全图、中心、边框、矩形、圆形和 alpha 透明区域。
-- 手绘遮罩：通过 `mask_painter.py` 打开本地画笔界面，手动画出编辑区域。
-- 遮罩预览：生成红色编辑区域 overlay，便于检查实际修改范围。
-- 输入预处理：自动压缩或缩放输入图，降低上传风险。
-- 结果索引：每次运行生成 `summary.json`，记录输入、遮罩、响应和输出路径。
-- 离线自检：检查 Python、Pillow、tkinter、API key、剪贴板后端和脚本路径。
-- 打包脚本：可重新生成可分发的 skill zip。
+该 skill 主要用于把自然语言创作需求转化为稳定的图像生成流程。用户可以描述想要的画面、提供参考图、指定需要局部修改的区域，Codex 会根据 skill 中的流程选择合适的生成或编辑方式，并保存本地结果。
 
-## 安装
+## 核心能力
 
-从 GitHub 仓库路径安装该 skill：
+- 文生图：根据文本描述生成插画、壁纸、素材图等图像。
+- 图生图：基于本地图片或剪贴板图片进行参考生成。
+- 局部编辑：通过遮罩只修改指定区域，保留其余画面。
+- 自动遮罩：支持全图、中心、边框、矩形、圆形和透明区域等常见遮罩方式。
+- 手绘遮罩：提供本地手绘遮罩工具，适合精确圈选需要修改的区域。
+- 遮罩预览：生成红色区域预览图，方便确认实际编辑范围。
+- 输入预处理：对输入图片进行必要的尺寸和格式处理，提高接口调用稳定性。
+- 结果索引：记录输入、遮罩、响应和输出路径，便于追踪每次生成结果。
+- 离线自检：检查运行环境、依赖、剪贴板能力和脚本可用性。
 
-```bash
-python3 install-skill-from-github.py --repo zhao123xiao/gpt-image2-skill --path skills/gpt-image2
-```
+## Dreamfield 环境
 
-安装完成后，重启 Codex。
+该 skill 推荐使用 Dreamfield 的 `gpt-image-2` 图像模型。作者已在 Dreamfield 中测试，供个人使用，支持 4K 输出。具体价格、模型限制和可用规格以 Dreamfield 当前页面为准。
 
-## 环境
+## 文档结构
 
-推荐服务和模型：
-
-- 服务商：[Dreamfield](https://www.dreamfield.top/)
-- 模型：`gpt-image-2`
-- API key 环境变量：`NEW_image2_API_KEY`
-
-作者备注：该 skill 已在 Dreamfield 中测试，供个人使用。支持 4K 输出。至于细节，可以查看 Dreamfield 的最新价格和模型限制。
-
-使用前设置 API key：
-
-```bash
-export NEW_image2_API_KEY='your_api_key'
-```
-
-## 快速使用
-
-文生图：
-
-```bash
-SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/gpt-image2"
-python3 "$SKILL_DIR/scripts/generate_image2.py" \
-  --prompt "A cinematic 16:9 desktop wallpaper of golden lightning over green hills at sunset, no text, no watermark." \
-  --size 1792x1024
-```
-
-图生图：
-
-```bash
-SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/gpt-image2"
-python3 "$SKILL_DIR/scripts/generate_image2.py" \
-  --image "/absolute/path/to/reference.png" \
-  --prompt "Create a new photorealistic 16:9 wallpaper inspired by this reference image, no text, no watermark." \
-  --size 1792x1024
-```
-
-矩形遮罩局部编辑：
-
-```bash
-SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/gpt-image2"
-python3 "$SKILL_DIR/scripts/generate_image2.py" \
-  --image "/absolute/path/to/source.png" \
-  --mask-auto rect \
-  --mask-rect 120,80,640,360 \
-  --prompt "Replace only the masked area while preserving the rest of the image. No text, no watermark." \
-  --size 1792x1024
-```
-
-手绘遮罩局部编辑：
-
-```bash
-SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/gpt-image2"
-python3 "$SKILL_DIR/scripts/generate_image2.py" \
-  --image "/absolute/path/to/source.png" \
-  --mask-draw \
-  --prompt "Replace only the painted area while preserving the rest of the image. No text, no watermark." \
-  --size 1792x1024
-```
-
-离线自检：
-
-```bash
-SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/gpt-image2"
-python3 "$SKILL_DIR/scripts/generate_image2.py" --self-test
-```
-
-重新打包：
-
-```bash
-SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/gpt-image2"
-python3 "$SKILL_DIR/scripts/package_skill.py"
-```
-
-## 参考文档
-
-- [SKILL.md](skills/gpt-image2/SKILL.md)：Codex 使用该 skill 时读取的核心说明。
-- [CLI 参数](skills/gpt-image2/references/cli.md)：完整命令行参数。
-- [遮罩说明](skills/gpt-image2/references/mask.md)：遮罩语义、自动遮罩和手绘遮罩。
-- [故障排查](skills/gpt-image2/references/troubleshooting.md)：自检、重试、剪贴板和手绘遮罩问题。
+- `skills/gpt-image2/SKILL.md`：Codex 使用该 skill 时读取的核心说明。
+- `skills/gpt-image2/references/cli.md`：命令行参数说明。
+- `skills/gpt-image2/references/mask.md`：遮罩语义、自动遮罩和手绘遮罩说明。
+- `skills/gpt-image2/references/troubleshooting.md`：自检、重试、剪贴板和手绘遮罩故障排查。

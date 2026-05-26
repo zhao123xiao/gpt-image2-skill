@@ -62,10 +62,3 @@ Processed copies are saved under `OUTPUT_DIR/processed-inputs/`.
 - `--self-test`: run offline environment checks and exit.
 
 Each run writes a `BASENAME_TIMESTAMP.summary.json` result index unless it exits before request setup.
-
-## Packaging
-
-```bash
-SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/gpt-image2"
-python3 "$SKILL_DIR/scripts/package_skill.py" [OUTPUT_ZIP]
-```

@@ -2,108 +2,31 @@
 
 Language: [简体中文](README.md) | **English**
 
-A Codex skill for Dreamfield `gpt-image-2` image generation and editing. It uses Dreamfield's OpenAI-compatible image API and supports text-to-image, image-to-image, clipboard image input, localized editing, auto masks, manual mask painting, and result summaries.
+GPT Image 2 Skill is a Codex skill for Dreamfield image generation and editing. It uses Dreamfield's OpenAI-compatible `gpt-image-2` image API so Codex can handle text-to-image generation, image-to-image generation, localized edits, and mask-based workflows.
 
-## Features
+## Purpose
 
-- Text-to-image generation from prompts.
-- Image-to-image generation from local or clipboard reference images.
-- Localized editing and inpainting through masks.
-- Auto masks for full image, center, border, rectangle, circle, and alpha areas.
-- Manual mask painting through `mask_painter.py`.
+This skill turns natural-language image requests into a structured generation workflow. Users can describe an image, provide reference images, or specify areas that should be edited. Codex uses the skill instructions to choose the appropriate generation or editing mode and save local results.
+
+## Core Capabilities
+
+- Text-to-image generation for illustrations, wallpapers, and visual assets.
+- Image-to-image generation from local files or clipboard images.
+- Localized editing through masks while preserving the rest of the image.
+- Auto masks for full image, center, border, rectangle, circle, and transparent areas.
+- Manual mask painting for precise edit-region selection.
 - Mask overlay previews for checking the actual edit area.
-- Input image preprocessing to resize or compress uploads.
-- `summary.json` result index for inputs, masks, responses, and outputs.
-- Offline self-test for Python, Pillow, tkinter, API key, clipboard backend, and script paths.
-- Packaging script for regenerating a distributable skill zip.
+- Input preprocessing for size and format handling.
+- Result summaries for tracking inputs, masks, responses, and outputs.
+- Offline self-test for runtime dependencies, clipboard support, and script availability.
 
-## Install
+## Dreamfield Environment
 
-Install this skill from the repository path:
+This skill is designed for Dreamfield's `gpt-image-2` image model. It has been tested with Dreamfield for personal use and supports 4K output. Current pricing, model limits, and available sizes should be checked on Dreamfield.
 
-```bash
-python3 install-skill-from-github.py --repo zhao123xiao/gpt-image2-skill --path skills/gpt-image2
-```
+## Documentation
 
-After installation, restart Codex.
-
-## Environment
-
-Recommended provider and model:
-
-- Provider: [Dreamfield](https://www.dreamfield.top/)
-- Model: `gpt-image-2`
-- API key environment variable: `NEW_image2_API_KEY`
-
-Author note: this skill has been tested with Dreamfield for personal use. It supports 4K output. For details, check Dreamfield for current pricing and model limits.
-
-Set the API key before using the skill:
-
-```bash
-export NEW_image2_API_KEY='your_api_key'
-```
-
-## Quick Start
-
-Text-to-image:
-
-```bash
-SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/gpt-image2"
-python3 "$SKILL_DIR/scripts/generate_image2.py" \
-  --prompt "A cinematic 16:9 desktop wallpaper of golden lightning over green hills at sunset, no text, no watermark." \
-  --size 1792x1024
-```
-
-Image-to-image:
-
-```bash
-SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/gpt-image2"
-python3 "$SKILL_DIR/scripts/generate_image2.py" \
-  --image "/absolute/path/to/reference.png" \
-  --prompt "Create a new photorealistic 16:9 wallpaper inspired by this reference image, no text, no watermark." \
-  --size 1792x1024
-```
-
-Localized edit with a rectangle mask:
-
-```bash
-SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/gpt-image2"
-python3 "$SKILL_DIR/scripts/generate_image2.py" \
-  --image "/absolute/path/to/source.png" \
-  --mask-auto rect \
-  --mask-rect 120,80,640,360 \
-  --prompt "Replace only the masked area while preserving the rest of the image. No text, no watermark." \
-  --size 1792x1024
-```
-
-Localized edit with manual mask painting:
-
-```bash
-SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/gpt-image2"
-python3 "$SKILL_DIR/scripts/generate_image2.py" \
-  --image "/absolute/path/to/source.png" \
-  --mask-draw \
-  --prompt "Replace only the painted area while preserving the rest of the image. No text, no watermark." \
-  --size 1792x1024
-```
-
-Offline self-test:
-
-```bash
-SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/gpt-image2"
-python3 "$SKILL_DIR/scripts/generate_image2.py" --self-test
-```
-
-Package the skill:
-
-```bash
-SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/gpt-image2"
-python3 "$SKILL_DIR/scripts/package_skill.py"
-```
-
-## References
-
-- [SKILL.md](skills/gpt-image2/SKILL.md): core instructions loaded by Codex when using this skill.
-- [CLI reference](skills/gpt-image2/references/cli.md): full command-line parameters.
-- [Mask reference](skills/gpt-image2/references/mask.md): mask semantics, auto masks, and manual mask painting.
-- [Troubleshooting](skills/gpt-image2/references/troubleshooting.md): self-test, retry, clipboard, and manual mask issues.
+- `skills/gpt-image2/SKILL.md`: core instructions loaded by Codex when using this skill.
+- `skills/gpt-image2/references/cli.md`: command-line parameter reference.
+- `skills/gpt-image2/references/mask.md`: mask semantics, auto masks, and manual mask painting.
+- `skills/gpt-image2/references/troubleshooting.md`: self-test, retry, clipboard, and manual mask troubleshooting.
